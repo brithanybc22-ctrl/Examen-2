@@ -1,8 +1,8 @@
 import { api } from './api';
 
 /**
- * YA IMPLEMENTADO — capa de acceso a la API de equipos (contrato del Examen I).
- * Las vistas llaman a estas funciones; nunca usan fetch directamente.
+ * YA IMPLEMENTADO capa de acceso a la API de equipos 
+ * Las vistas llaman a estas funciones, nunca usan fetch directamente
  */
 export type Estado = 'disponible' | 'prestado' | 'mantenimiento';
 
@@ -22,7 +22,7 @@ export interface Pagina<T> {
   meta: { current_page: number; last_page: number; per_page: number; total: number };
 }
 
-/** Lo que se envía al crear o actualizar. costo_interno no viaja de vuelta: EquipoResource lo oculta. */
+/** Lo que se envía al crear o actualizar, costo_interno no viaja de vuelta, EquipoResource lo oculta */
 export interface DatosEquipo {
   codigo: string;
   nombre: string;

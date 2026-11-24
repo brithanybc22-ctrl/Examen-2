@@ -11,24 +11,78 @@ export interface OpcionesApi {
   params?: Record<string, string | number | undefined>;
 }
 
-/**
- * TODO [M1] Cliente HTTP único de la aplicación (8 pts).
- *
- * api<T>(ruta, { method, body, params }) debe:
- *  1. Construir la URL como BASE_URL + ruta y agregar como query string solo los params
- *     que tengan valor (ni undefined ni '').           ej. api('/equipos', { params: { page: 2, q: '' } })
- *  2. Enviar siempre "Accept: application/json".
- *  3. Si hay token (obtenerToken()), enviar "Authorization: Bearer <token>". Nunca en la URL.
- *  4. Si hay body, enviarlo como JSON ("Content-Type: application/json" + JSON.stringify).
- *  5. Cancelar la petición si tarda más de TIEMPO_MAXIMO_MS (AbortController).
- *     Si fetch falla sin respuesta (sin red, tiempo agotado, CORS), lanzar
- *     new ErrorApi(0, { mensaje: 'No fue posible conectar con la API.' }).
- *  6. Si la respuesta es 204, devolver null.
- *  7. Si response.ok es false, lanzar new ErrorApi(status, cuerpoJson).
- *     Si el estado es 401 (y la ruta no es /login): await olvidarSesion() y router.replace('/login').
- *  8. En cualquier otro caso, devolver el cuerpo JSON.
- */
+function construirUrl(ruta: string, params?: Record<string, string | number | undefined>): string {
+  const base = (BASE_URL ?? '').replace(/\/+$/, '');
+  const path = ruta.startsWith('/') ? ruta : `/${ruta}`;
+  const searchParams = new URLSearchParams();
+
+  if (params) {
+    for (const [clave, valor] of Object.entries(params)) {
+      if (valor !== undefined && valor !== '') {
+        searchParams.set(clave, String(valor));
+      }
+    }
+  }
+
+  const query = searchParams.toString();
+  return query ? `${base}${path}?${query}` : `${base}${path}`;
+}
+
 export async function api<T = unknown>(ruta: string, opciones: OpcionesApi = {}): Promise<T> {
-  void [ErrorApi, obtenerToken, olvidarSesion, router, BASE_URL, TIEMPO_MAXIMO_MS, ruta, opciones];
-  throw new Error('TODO [M1] api() sin implementar');
+  const { method = 'GET', body, params } = opciones;
+  const url = construirUrl(ruta, params);
+
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+  };
+
+  const token = await obtenerToken();
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+
+  if (body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+  }
+
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(), TIEMPO_MAXIMO_MS);
+
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+      signal: controller.signal,
+    });
+  } catch {
+    throw new ErrorApi(0, { mensaje: 'No fue posible conectar con la API' });
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+
+  if (response.status === 204) {
+    return null as T;
+  }
+
+  let cuerpo: unknown = null;
+  const texto = await response.text();
+  if (texto) {
+    try {
+      cuerpo = JSON.parse(texto);
+    } catch {
+      cuerpo = { mensaje: texto };
+    }
+  }
+
+  if (!response.ok) {
+    if (response.status === 401 && !ruta.endsWith('/login')) {
+      await olvidarSesion();
+      await router.replace('/login');
+    }
+    throw new ErrorApi(response.status, cuerpo);
+  }
+
+  return cuerpo as T;
 }

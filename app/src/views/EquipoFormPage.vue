@@ -54,7 +54,7 @@
           <ion-item>
             <ion-input v-model="datos.costo_interno" label="Costo interno (₡)" label-placement="stacked"
               type="number" inputmode="decimal" :min="0"
-              :helper-text="id ? 'La API no expone este dato: vuelva a ingresarlo.' : undefined" />
+              :helper-text="id ? 'La API no expone este dato, vuelva a ingresarlo' : undefined" />
           </ion-item>
           <small v-if="errores.costo_interno" class="error-campo">{{ errores.costo_interno }}</small>
         </ion-list>
@@ -79,7 +79,7 @@ import { ErrorApi } from '@/services/errores';
 import { mostrarToast } from '@/services/avisos';
 import { useConexion, vibrar } from '@/composables/useConexion';
 
-// id llega por props: true en la ruta equipos/:id/editar; en equipos/nuevo es undefined
+// id llega por props, true en la ruta equipos/:id/editar; en equipos/nuevo es undefined
 const props = defineProps<{ id?: string }>();
 const id = props.id;
 
@@ -96,30 +96,95 @@ const listaCategorias = ref<Categoria[]>([]);
 const estadoActual = ref<Estado>('disponible');
 const errores = ref<Record<string, string>>({});
 
-/**
- * TODO [M5] Al entrar a la página:
- *  - Cargar las categorías para el ion-select (categorias()).
- *  - Nuevo: dejar el formulario vacío con vacio().
- *  - Edición: obtener(id) y llenar datos. Guarde el estado actual en estadoActual.
- *    costo_interno queda en null: la API no lo devuelve (EquipoResource lo oculta).
- *  - 404 → toast y volver a /tabs/equipos.
- */
+function volverALista() {
+  if (ionRouter.canGoBack()) {
+    ionRouter.back();
+  } else {
+    ionRouter.replace('/tabs/equipos');
+  }
+}
+
 onIonViewWillEnter(async () => {
   errores.value = {};
-  void [categorias, obtener, listaCategorias, estadoActual, ionRouter];
+  Object.assign(datos, vacio());
+  estadoActual.value = 'disponible';
+
+  try {
+    listaCategorias.value = await categorias();
+
+    if (id) {
+      const equipo = await obtener(id);
+      estadoActual.value = equipo.estado;
+      Object.assign(datos, {
+        codigo: equipo.codigo,
+        nombre: equipo.nombre,
+        categoria_id: equipo.categoria?.id ?? null,
+        estado: equipo.estado === 'prestado' ? undefined : equipo.estado,
+        fecha_adquisicion: equipo.fecha_adquisicion,
+        costo_interno: null,
+      });
+    }
+  } catch (err) {
+    if (err instanceof ErrorApi && err.status === 404) {
+      await mostrarToast('El equipo ya no existe', 'medium');
+      volverALista();
+      return;
+    }
+    await mostrarToast('No fue posible cargar los datos del formulario', 'danger');
+  }
 });
 
-/**
- * TODO [M5] guardar()
- *  1. Mostrar loadingController ("Guardando…") y cerrarlo SIEMPRE, salga bien o mal.
- *  2. Enviar el cuerpo con código en mayúscula y sin espacios sobrantes, y costo_interno como número.
- *     Si el equipo está prestado, no envíe el campo estado.
- *  3. Nuevo → crear(); edición → actualizar(id).
- *  4. Éxito: vibrar() [M7], toast y volver a la lista con useIonRouter (back si se puede).
- *  5. 422 → mostrar el primer mensaje de cada campo debajo de su campo (error.erroresPorCampo).
- *     404 → toast "El equipo ya no existe."   ·   otros → toast genérico.
- */
 async function guardar() {
-  void [loadingController, actualizar, crear, ErrorApi, mostrarToast, vibrar];
+  errores.value = {};
+  const loading = await loadingController.create({ message: 'Guardando…' });
+  await loading.present();
+
+  try {
+    const costoRaw = datos.costo_interno;
+    const costoNumerico =
+      costoRaw === null || costoRaw === undefined || String(costoRaw).trim() === ''
+        ? null
+        : Number(costoRaw);
+
+    const payload: DatosEquipo = {
+      codigo: datos.codigo.trim().toUpperCase(),
+      nombre: datos.nombre.trim(),
+      categoria_id: datos.categoria_id !== null ? Number(datos.categoria_id) : null,
+      fecha_adquisicion: datos.fecha_adquisicion,
+      costo_interno: Number.isNaN(costoNumerico) ? null : costoNumerico,
+    };
+
+    if (estadoActual.value !== 'prestado' && datos.estado) {
+      payload.estado = datos.estado;
+    }
+
+    if (id) {
+      await actualizar(id, payload);
+    } else {
+      await crear(payload);
+    }
+
+    await vibrar();
+    await mostrarToast(id ? 'Equipo actualizado correctamente' : 'Equipo creado correctamente', 'success');
+    volverALista();
+  } catch (err) {
+    if (err instanceof ErrorApi) {
+      if (err.status === 422) {
+        errores.value = err.erroresPorCampo;
+        return;
+      }
+      if (err.status === 404) {
+        await mostrarToast('El equipo ya no existe', 'medium');
+        volverALista();
+        return;
+      }
+      const cuerpo = err.cuerpo as { mensaje?: string; message?: string } | null;
+      await mostrarToast(cuerpo?.mensaje || cuerpo?.message || 'No se pudo guardar el equipo.', 'danger');
+      return;
+    }
+    await mostrarToast('No se pudo guardar el equipo', 'danger');
+  } finally {
+    await loading.dismiss();
+  }
 }
 </script>
